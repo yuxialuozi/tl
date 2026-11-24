@@ -211,7 +211,7 @@
   const header = document.createElement("div");
   header.className = "tl-header";
   const title = document.createElement("span");
-  title.textContent = "tl 翻译";
+  title.textContent = "tl";
   const close = document.createElement("button");
   close.className = "tl-close";
   close.type = "button";
@@ -339,6 +339,7 @@
   }
 
   function showLoading(rect) {
+    title.textContent = "tl · 处理中";
     const loading = document.createElement("div");
     loading.className = "tl-loading";
     const spinner = document.createElement("span");
@@ -351,13 +352,19 @@
 
   function showResult(rect, result) {
     if (result.mode === "vocabulary" && result.vocabulary) {
+      title.textContent = "English · 词典";
       showPanel(rect, renderVocabulary(result.vocabulary));
       return;
     }
+    const languageLabels = { English: "English", Chinese: "中文" };
+    const source = languageLabels[result.sourceLanguage] || result.sourceLanguage;
+    const target = languageLabels[result.targetLanguage] || result.targetLanguage;
+    title.textContent = `${source} → ${target}`;
     showPanel(rect, renderTranslation(result));
   }
 
   function showError(rect, message, needsSettings) {
+    title.textContent = "tl · 出错";
     const content = document.createElement("div");
     content.textContent = message;
     if (needsSettings) {

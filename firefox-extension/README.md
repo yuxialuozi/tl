@@ -2,14 +2,17 @@
 
 A small Firefox add-on for translating selected English or Chinese text with the same OpenAI-compatible endpoint used by the `tl` CLI.
 
-![tl Firefox extension translating a selected word](../docs/images/firefox-extension-demo.png)
+<p align="center">
+  <img src="../docs/images/firefox-extension-demo.png" alt="tl Firefox extension translating a selected word" width="760">
+</p>
 
 ## Features
 
 - Select text on any page to show a small floating **译** button.
 - Click the button to translate in place.
 - A single English word uses the dictionary layout: word, part of speech, definition, Chinese meaning, and two examples.
-- English sentences are translated to Chinese; Chinese text is translated to English with Original and Translation sections.
+- Bidirectional translation: English sentences become Chinese, and Chinese text becomes English.
+- The popup title shows the active direction, such as `English → 中文` or `中文 → English`.
 - Translation runs in the extension background, so the API key is not exposed to web pages.
 - Uses structured JSON output and the same translation prompt as `tl`.
 
@@ -39,9 +42,20 @@ When you click the translation button, the selected text is sent to the configur
 
 ## Usage
 
-1. Select an English word, sentence, or Chinese text.
-2. Click the floating **译** button.
-3. Read the result in the popup.
+English to Chinese:
+
+1. Select an English sentence or paragraph.
+2. Click the **译** button and read the Chinese result.
+
+Chinese to English:
+
+1. Select Chinese text such as `守护进程在后台运行。`.
+2. Click the **译** button. The result is `The daemon runs in the background.`.
+
+Single English word:
+
+1. Select a word such as `vulnerability`.
+2. Click the **译** button to see its word, part of speech, definition, Chinese meaning, and examples.
 
 Only translation mode is used. The extension does not add history, favorites, a sidebar, or a full-page immersive translation mode.
 

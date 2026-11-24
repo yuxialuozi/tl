@@ -10,6 +10,32 @@
 - Read TOML configuration with environment variable overrides.
 - Render clean output with no TUI, history, favorites, or interactive mode.
 
+## Firefox Extension
+
+A companion Firefox add-on translates selected text directly on the page. Select text with the mouse, click the floating **译** button, and the result appears in a compact popup.
+
+<p align="center">
+  <img src="docs/images/firefox-extension-demo.png" alt="tl Firefox extension translating a selected word" width="760">
+</p>
+
+Features:
+
+- **English → Chinese**: select an English sentence or paragraph.
+- **Chinese → English**: select Chinese text.
+- **Single English word**: shows the same dictionary layout as the CLI, including part of speech, definition, Chinese meaning, and two examples.
+- Uses the configured OpenAI-compatible endpoint, model, timeout, and non-thinking mode.
+- The API key stays in Firefox extension local storage and is never exposed to web pages.
+
+Install the development build:
+
+1. Open Firefox and navigate to `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on**.
+3. Select `firefox-extension/manifest.json` from this repository.
+4. Open the extension settings and enter your API key. The default endpoint is `https://aiping.cn/api/v1`, the default model is `Qwen3.5-9B`, and thinking mode is disabled.
+5. Select English or Chinese text on any page and click the **译** button.
+
+See [firefox-extension/README.md](firefox-extension/README.md) for more details.
+
 ## Installation
 
 Build from source:
@@ -133,14 +159,6 @@ make build VERSION=0.1.0
 
 The version is embedded with linker flags, so future GitHub Release builds can use the same Makefile without changing the source.
 
-## Firefox Extension
-
-A companion Firefox add-on is available in `firefox-extension/`. It shows a small **译** button after selecting English or Chinese text and translates the selection in place.
-
-![tl Firefox extension translating a selected word](docs/images/firefox-extension-demo.png)
-
-See `firefox-extension/README.md` for installation and configuration details. The extension defaults to the same endpoint, model, timeout, and non-thinking mode as the CLI, but the API key must be entered in the extension settings and is never bundled into the source.
-
 ## Project Layout
 
 ```text
@@ -151,6 +169,8 @@ internal/llm/         OpenAI-compatible HTTP client
 internal/translator/  mode detection, prompts, JSON parsing
 internal/renderer/    Lipgloss and plain-text output
 configs/              example configuration
+firefox-extension/    Firefox selection translator
+docs/images/          documentation screenshots
 ```
 
 ## License
