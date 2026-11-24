@@ -16,10 +16,11 @@ const maxResponseBytes = 4 << 20
 
 // Client calls an OpenAI-compatible Chat Completions endpoint.
 type Client struct {
-	baseURL    string
-	apiKey     string
-	model      string
-	httpClient *http.Client
+	baseURL        string
+	apiKey         string
+	model          string
+	enableThinking *bool
+	httpClient     *http.Client
 }
 
 // APIError represents a non-successful API response.
@@ -38,8 +39,9 @@ type message struct {
 }
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
+	Model          string    `json:"model"`
+	Messages       []message `json:"messages"`
+	EnableThinking *bool     `json:"enable_thinking,omitempty"`
 }
 
 type chatResponse struct {
@@ -57,14 +59,15 @@ type errorResponse struct {
 }
 
 // New creates a client with a reusable HTTP client.
-func New(baseURL, apiKey, model string, timeout time.Duration) *Client {
+func New(baseURL, apiKey, model string, timeout time.Duration, enableThinking *bool) *Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
-		model:   model,
+		baseURL:        strings.TrimRight(baseURL, "/"),
+		apiKey:         apiKey,
+		model:          model,
+		enableThinking: enableThinking,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -74,7 +77,8 @@ func New(baseURL, apiKey, model string, timeout time.Duration) *Client {
 // Complete sends a system and user prompt and returns the assistant message.
 func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	payload := chatRequest{
-		Model: c.model,
+		Model:          c.model,
+		EnableThinking: c.enableThinking,
 		Messages: []message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},

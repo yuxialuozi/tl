@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "tl 划词翻译",
+  "version": "0.1.0",
+  "description": "划词后点击悬浮图标，使用 tl 的 OpenAI-compatible 配置翻译英文或中文。",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tl@yuxialuozi.github.io",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["websiteContent", "authenticationInfo"]
+      }
+    }
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["https://aiping.cn/*"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "scripts": ["defaults.js", "background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  }
+}

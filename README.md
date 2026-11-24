@@ -50,9 +50,12 @@ model = "YOUR_MODEL"
 
 [app]
 timeout = 30
+enable_thinking = false
 ```
 
 The endpoint must expose the OpenAI-compatible `POST /chat/completions` API. `base_url` normally includes the version prefix, for example `https://api.openai.com/v1`.
+
+Set `enable_thinking = false` to send `enable_thinking: false` with each request. This is useful for Qwen models that support a non-thinking mode. Leave it unset to use the provider default.
 
 API key environment variables are preferred:
 
@@ -129,6 +132,14 @@ make build VERSION=0.1.0
 ```
 
 The version is embedded with linker flags, so future GitHub Release builds can use the same Makefile without changing the source.
+
+## Firefox Extension
+
+A companion Firefox add-on is available in `firefox-extension/`. It shows a small **译** button after selecting English or Chinese text and translates the selection in place.
+
+![tl Firefox extension translating a selected word](docs/images/firefox-extension-demo.png)
+
+See `firefox-extension/README.md` for installation and configuration details. The extension defaults to the same endpoint, model, timeout, and non-thinking mode as the CLI, but the API key must be entered in the extension settings and is never bundled into the source.
 
 ## Project Layout
 

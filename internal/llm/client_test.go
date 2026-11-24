@@ -23,7 +23,11 @@ func TestClientComplete(t *testing.T) {
 			t.Errorf("Authorization = %q", got)
 		}
 
-		var request chatRequest
+		var request struct {
+			Model          string    `json:"model"`
+			Messages       []message `json:"messages"`
+			EnableThinking *bool     `json:"enable_thinking"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
@@ -36,13 +40,17 @@ func TestClientComplete(t *testing.T) {
 		if request.Messages[1].Content != "hello" {
 			t.Errorf("user content = %q", request.Messages[1].Content)
 		}
+		if request.EnableThinking == nil || *request.EnableThinking {
+			t.Errorf("enable_thinking = %v, want false", request.EnableThinking)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":" world "}}]}`))
 	}))
 	defer server.Close()
 
-	client := New(server.URL+"/v1/", "test-key", "test-model", time.Second)
+	enableThinking := false
+	client := New(server.URL+"/v1/", "test-key", "test-model", time.Second, &enableThinking)
 	got, err := client.Complete(context.Background(), "system", "hello")
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
@@ -59,7 +67,7 @@ func TestClientAPIErrorRedactsKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := New(server.URL, "secret-key", "test-model", time.Second)
+	client := New(server.URL, "secret-key", "test-model", time.Second, nil)
 	_, err := client.Complete(context.Background(), "system", "hello")
 	if err == nil {
 		t.Fatal("Complete() error = nil")
@@ -96,7 +104,7 @@ func TestClientRejectsInvalidResponses(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := New(server.URL, "key", "model", time.Second)
+			client := New(server.URL, "key", "model", time.Second, nil)
 			if _, err := client.Complete(context.Background(), "system", "hello"); err == nil {
 				t.Fatal("Complete() error = nil")
 			}
@@ -111,7 +119,7 @@ func TestClientTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := New(server.URL, "key", "model", 20*time.Millisecond)
+	client := New(server.URL, "key", "model", 20*time.Millisecond, nil)
 	_, err := client.Complete(context.Background(), "system", "hello")
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("Complete() error = %v, want timeout", err)

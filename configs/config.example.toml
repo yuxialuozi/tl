@@ -5,3 +5,4 @@ model = "YOUR_MODEL"
 
 [app]
 timeout = 30
+enable_thinking = false

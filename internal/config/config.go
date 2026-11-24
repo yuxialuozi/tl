@@ -35,7 +35,8 @@ type Provider struct {
 
 // App contains application settings.
 type App struct {
-	Timeout int `toml:"timeout"`
+	Timeout        int   `toml:"timeout"`
+	EnableThinking *bool `toml:"enable_thinking"`
 }
 
 // Config is the complete tl configuration.
@@ -66,7 +67,8 @@ type rawProvider struct {
 }
 
 type rawApp struct {
-	Timeout *int `toml:"timeout"`
+	Timeout        *int  `toml:"timeout"`
+	EnableThinking *bool `toml:"enable_thinking"`
 }
 
 type rawConfig struct {
@@ -155,6 +157,9 @@ func applyFile(result *Result, raw rawConfig) {
 	}
 	if raw.App.Timeout != nil {
 		result.Config.App.Timeout = *raw.App.Timeout
+	}
+	if raw.App.EnableThinking != nil {
+		result.Config.App.EnableThinking = raw.App.EnableThinking
 	}
 }
 

@@ -80,6 +80,7 @@ func runQuery(ctx context.Context, input string, stdout io.Writer) error {
 		loaded.Config.Provider.APIKey,
 		loaded.Config.Provider.Model,
 		loaded.Config.Timeout(),
+		loaded.Config.App.EnableThinking,
 	)
 	service := translator.New(client)
 	output, err := service.Run(ctx, input)

@@ -47,6 +47,7 @@ model = "file-model"
 
 [app]
 timeout = 12
+enable_thinking = false
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -73,6 +74,9 @@ timeout = 12
 	}
 	if loaded.Config.App.Timeout != 12 {
 		t.Fatalf("Timeout = %d", loaded.Config.App.Timeout)
+	}
+	if loaded.Config.App.EnableThinking == nil || *loaded.Config.App.EnableThinking {
+		t.Fatalf("EnableThinking = %v, want false", loaded.Config.App.EnableThinking)
 	}
 	if loaded.Sources.BaseURL != SourceEnvironment || loaded.Sources.APIKey != SourceFile || loaded.Sources.Model != SourceEnvironment {
 		t.Fatalf("Sources = %+v", loaded.Sources)
