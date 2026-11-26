@@ -7,24 +7,33 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestWordbooksHaveUniqueChoices(t *testing.T) {
 	books := availableWordbooks()
-	if len(books) < 3 {
-		t.Fatalf("wordbooks = %d, want at least 3", len(books))
+	if len(books) < 6 {
+		t.Fatalf("wordbooks = %d, want at least 6", len(books))
 	}
 	for _, book := range books {
-		if len(book.Words) < 4 {
+		if len(book.Words) < 20 {
 			t.Fatalf("%s has only %d words", book.Name, len(book.Words))
 		}
 		seen := make(map[string]bool)
 		for _, word := range book.Words {
-			if word.Term == "" || word.Meaning == "" {
-				t.Fatalf("%s contains an empty word entry", book.Name)
+			if word.Term == "" || word.Meaning == "" || word.Phonetic == "" || word.PartOfSpeech == "" || word.Category == "" || word.Definition == "" || len(word.Examples) == 0 {
+				t.Fatalf("%s contains an incomplete word entry: %+v", book.Name, word)
 			}
 			if word.Term != strings.ToLower(word.Term) {
 				t.Fatalf("%s word %q is not lowercase", book.Name, word.Term)
+			}
+			if !strings.HasPrefix(word.Phonetic, "/") || !strings.HasSuffix(word.Phonetic, "/") {
+				t.Fatalf("%s word %q has invalid phonetic %q", book.Name, word.Term, word.Phonetic)
+			}
+			for _, example := range word.Examples {
+				if strings.TrimSpace(example) == "" {
+					t.Fatalf("%s word %q has an empty example", book.Name, word.Term)
+				}
 			}
 			if seen[word.Meaning] {
 				t.Fatalf("%s contains duplicate meaning %q", book.Name, word.Meaning)
@@ -88,6 +97,16 @@ func updateModel(t *testing.T, model Model, message tea.Msg) Model {
 	return result
 }
 
+func confirmCombatResult(t *testing.T, model Model) Model {
+	t.Helper()
+	updated, _ := model.updatePlayingKey("enter")
+	result, ok := updated.(Model)
+	if !ok {
+		t.Fatal("confirm result returned a different model type")
+	}
+	return result
+}
+
 func TestStartRunCreatesExplorationState(t *testing.T) {
 	model := startedModel(t)
 	if model.screen != screenPlaying || model.run == nil {
@@ -105,7 +124,7 @@ func TestStartRunCreatesExplorationState(t *testing.T) {
 	if model.run.playerHP != model.run.playerMaxHP {
 		t.Fatalf("player HP = %d/%d", model.run.playerHP, model.run.playerMaxHP)
 	}
-	if len(model.run.monsters) < 7 {
+	if len(model.run.monsters) != 5 {
 		t.Fatalf("monsters = %d", len(model.run.monsters))
 	}
 	if len(model.run.items) != startingLoot {
@@ -122,6 +141,11 @@ func TestStartRunCreatesExplorationState(t *testing.T) {
 	}
 	if bosses != 1 {
 		t.Fatalf("boss count = %d", bosses)
+	}
+	for _, item := range model.run.items {
+		if manhattan(item.pos, model.run.player) < 8 {
+			t.Fatalf("starting item too close to player: %+v", item.pos)
+		}
 	}
 }
 
@@ -202,6 +226,7 @@ func TestGargoyleRequiresConsecutiveCorrectAnswers(t *testing.T) {
 		if model.run.combat.enemy.hp != before {
 			t.Fatalf("enemy HP changed before ward broke: %d", model.run.combat.enemy.hp)
 		}
+		model = confirmCombatResult(t, model)
 	}
 	if model.run.combat.enemy.guard != 0 {
 		t.Fatalf("guard = %d, want 0", model.run.combat.enemy.guard)
@@ -254,6 +279,7 @@ func TestThreeCorrectAnswersOfferSkills(t *testing.T) {
 		correct := model.run.question.correct
 		updated, _ := model.answer(correct)
 		model = updated.(Model)
+		model = confirmCombatResult(t, model)
 	}
 	if !model.run.awaitingSkill {
 		t.Fatal("awaitingSkill = false")
@@ -404,12 +430,16 @@ func TestKillingMonsterDropsLootAndReturnsToMap(t *testing.T) {
 	model.run.combat.enemy.hp = 1
 	correct := model.run.question.correct
 	updated, _ := model.answer(correct)
-	finished := updated.(Model)
-	if finished.run.inCombat || finished.run.combat != nil {
-		t.Fatal("combat did not end")
+	locked := updated.(Model)
+	if !locked.run.combatLocked || !locked.run.pendingKill {
+		t.Fatal("kill result should stay locked on screen")
 	}
-	if finished.run.kills != 1 || len(finished.run.loot) != 1 {
-		t.Fatalf("kills = %d, loot = %d", finished.run.kills, len(finished.run.loot))
+	if locked.run.kills != 1 || len(locked.run.loot) != 1 || locked.run.lastLoot == "" {
+		t.Fatalf("kills = %d, loot = %d, last = %q", locked.run.kills, len(locked.run.loot), locked.run.lastLoot)
+	}
+	finished := confirmCombatResult(t, locked)
+	if finished.run.inCombat || finished.run.combat != nil {
+		t.Fatal("combat did not end after confirmation")
 	}
 	if len(finished.run.monsters) != 0 {
 		t.Fatalf("monster was not removed: %d", len(finished.run.monsters))
@@ -421,7 +451,11 @@ func TestBossDefeatSettlesVictory(t *testing.T) {
 	model.run.combat.enemy.hp = 1
 	correct := model.run.question.correct
 	updated, _ := model.answer(correct)
-	settled := updated.(Model)
+	locked := updated.(Model)
+	if !locked.run.combatLocked || !locked.run.pendingKill {
+		t.Fatal("boss defeat should remain visible before confirmation")
+	}
+	settled := confirmCombatResult(t, locked)
 	if settled.screen != screenSettlement || settled.run.outcome != outcomeVictory {
 		t.Fatalf("screen = %d outcome = %s", settled.screen, settled.run.outcome)
 	}
@@ -432,7 +466,11 @@ func TestPlayerDefeatSettlesDefeat(t *testing.T) {
 	model.run.playerHP = 1
 	wrong := (model.run.question.correct + 1) % len(model.run.question.options)
 	updated, _ := model.answer(wrong)
-	settled := updated.(Model)
+	locked := updated.(Model)
+	if !locked.run.combatLocked || !locked.run.pendingDefeat {
+		t.Fatal("defeat should remain visible before confirmation")
+	}
+	settled := confirmCombatResult(t, locked)
 	if settled.screen != screenSettlement || settled.run.outcome != outcomeDefeat {
 		t.Fatalf("screen = %d outcome = %s", settled.screen, settled.run.outcome)
 	}
@@ -520,14 +558,345 @@ func TestViewsContainExplorationAndCombatPanels(t *testing.T) {
 	}
 
 	model = combatModel(t, slimeKind)
+	model.run.playerHP = 42
 	term := model.run.question.word.Term
 	view = model.View()
-	for _, part := range []string{"ENEMY //", "TARGET ACQUIRED", "SYSTEM LOG", term} {
+	for _, part := range []string{"FIRST PERSON // ENCOUNTER", "ENEMY HP", "PLAYER HP", "42/100", "TARGET LOCK", "SYSTEM LOG", term, model.run.question.word.Phonetic} {
 		if !strings.Contains(view, part) {
 			t.Errorf("combat view missing %q", part)
 		}
 	}
+	correct := model.run.question.correct
+	updated, _ := model.answer(correct)
+	model = updated.(Model)
+	view = model.View()
+	for _, part := range []string{"Definition", "中文", "Examples", model.run.question.word.Definition, model.run.question.word.Examples[0], "ENTER 继续"} {
+		if !strings.Contains(view, part) {
+			t.Errorf("combat result view missing %q", part)
+		}
+	}
+	if strings.Contains(view, "SECTOR MAP") {
+		t.Error("combat view should replace the map with the encounter scene")
+	}
 	if strings.Contains(view, strings.ToUpper(term)) {
 		t.Errorf("target word rendered in uppercase: %q", term)
 	}
+}
+
+func TestBookSelectionOpensModeScreen(t *testing.T) {
+	model := NewModel(7)
+	updated, _ := model.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	selected := updated.(Model)
+	if selected.screen != screenMode {
+		t.Fatalf("screen = %d, want mode selection", selected.screen)
+	}
+	if len(gameModes) < 3 {
+		t.Fatalf("modes = %d", len(gameModes))
+	}
+}
+
+func TestStudyCoversEveryWordAndCollectsMistakes(t *testing.T) {
+	model := NewModel(11)
+	model.selected = 0
+	model = model.startStudy(studyFull)
+	if model.screen != screenStudy || model.study == nil {
+		t.Fatal("study mode did not start")
+	}
+	total := len(model.study.words)
+	if total != len(model.books[model.selected].Words) {
+		t.Fatalf("study words = %d, want %d", total, len(model.books[model.selected].Words))
+	}
+
+	for index := 0; index < total; index++ {
+		if model.study.stage != studyPrompt {
+			t.Fatalf("word %d stage = %d, want prompt", index, model.study.stage)
+		}
+		updated, _ := model.updateStudyKey("enter")
+		model = updated.(Model)
+		if model.study.stage != studyReveal {
+			t.Fatalf("word %d did not reveal", index)
+		}
+		answer := "2"
+		if index < 2 {
+			answer = "1"
+		}
+		updated, _ = model.updateStudyKey(answer)
+		model = updated.(Model)
+	}
+
+	if model.study.stage != studyDone {
+		t.Fatalf("stage = %d, want done", model.study.stage)
+	}
+	if model.study.known+model.study.unknown != total {
+		t.Fatalf("known + unknown = %d, want %d", model.study.known+model.study.unknown, total)
+	}
+	if model.reviewCount(model.books[model.selected]) != 2 {
+		t.Fatalf("review count = %d, want 2", model.reviewCount(model.books[model.selected]))
+	}
+
+	review := model.startStudy(studyReview)
+	if len(review.study.words) != 2 {
+		t.Fatalf("review words = %d, want 2", len(review.study.words))
+	}
+}
+
+func TestStudyRevealShowsPhoneticDefinitionAndExample(t *testing.T) {
+	model := NewModel(17)
+	model = model.startStudy(studyFull)
+	updated, _ := model.updateStudyKey("enter")
+	model = updated.(Model)
+	word := model.study.words[model.study.index]
+	view := model.View()
+	for _, part := range []string{word.Phonetic, "Definition", word.Definition, "中文", word.Meaning, "Examples", word.Examples[0]} {
+		if !strings.Contains(view, part) {
+			t.Errorf("study card missing %q", part)
+		}
+	}
+}
+
+func TestBagSelectionUsesChosenConsumable(t *testing.T) {
+	model := combatModel(t, skeletonKind)
+	model.run.inventory["health_potion"] = 1
+	model.run.inventory["bomb"] = 1
+	updated, _ := model.updatePlayingKey("e")
+	model = updated.(Model)
+	if !model.run.bagOpen || len(model.run.bagEntries()) != 2 {
+		t.Fatalf("bag open = %v, entries = %d", model.run.bagOpen, len(model.run.bagEntries()))
+	}
+	model.run.bagSelection = 1
+	before := model.run.combat.enemy.hp
+	updated, _ = model.updateBagKey("enter")
+	model = updated.(Model)
+	if model.run.combat.enemy.hp >= before {
+		t.Fatal("selected bomb did not damage the enemy")
+	}
+	if model.run.inventory["bomb"] != 0 || model.run.inventory["health_potion"] != 1 {
+		t.Fatalf("wrong item consumed: %v", model.run.inventory)
+	}
+	if model.run.bagOpen {
+		t.Fatal("bag should close after using an item")
+	}
+}
+
+func TestMonsterLootPoolsMatchDifficulty(t *testing.T) {
+	allowed := func(kind monsterKind) map[string]itemRarity {
+		result := map[string]itemRarity{}
+		for rarity, ids := range monsterLoot[kind] {
+			for _, id := range ids {
+				result[id] = rarity
+			}
+		}
+		return result
+	}
+	rng := rand.New(rand.NewSource(99))
+	for _, kind := range []monsterKind{slimeKind, skeletonKind, gargoyleKind, bossKind} {
+		pool := allowed(kind)
+		for draw := 0; draw < 500; draw++ {
+			item := randomItem(rng, kind)
+			if _, ok := pool[item.id]; !ok {
+				t.Fatalf("%v dropped %s outside its pool", kind, item.id)
+			}
+			if kind == slimeKind && item.rarity > rarityRare {
+				t.Fatalf("slime dropped epic %s", item.id)
+			}
+			if (kind == gargoyleKind || kind == bossKind) && item.rarity < rarityRare {
+				t.Fatalf("%v dropped common %s", kind, item.id)
+			}
+		}
+	}
+}
+
+func TestDamageFloatersStayUntilConfirmationAndCapAt999(t *testing.T) {
+	small := renderImpact(damageFloater{value: 19, label: "HIT"})
+	large := renderImpact(damageFloater{value: 80, label: "CRIT", kind: floaterCrit})
+	capped := renderImpact(damageFloater{value: 5000, label: "CRIT", kind: floaterCrit})
+	if len(small) != 1 {
+		t.Fatalf("small impact lines = %d, want 1", len(small))
+	}
+	if len(large) <= len(small) {
+		t.Fatalf("large impact lines = %d, want more than %d", len(large), len(small))
+	}
+	for _, line := range capped {
+		if lipgloss.Width(line) > mapWidth {
+			t.Fatalf("capped impact width = %d, want <= %d", lipgloss.Width(line), mapWidth)
+		}
+	}
+
+	model := combatModel(t, slimeKind)
+	model.run.combat.enemy.hp = 5000
+	model.run.combat.enemy.maxHP = 5000
+	model.run.baseDamage = 5000
+	correct := model.run.question.correct
+	updated, _ := model.answer(correct)
+	model = updated.(Model)
+	if len(model.run.floaters) == 0 || model.run.hitFlash == 0 {
+		t.Fatal("correct answer did not trigger hit feedback")
+	}
+	if !model.run.combatLocked {
+		t.Fatal("answer result was not locked")
+	}
+	floater, ok := model.run.latestFloater()
+	if !ok || floater.value != maxCombatDamage {
+		t.Fatalf("float value = %d, want %d", floater.value, maxCombatDamage)
+	}
+	if model.run.correct != 1 {
+		t.Fatalf("correct = %d", model.run.correct)
+	}
+	updated, _ = model.answer((correct + 1) % len(model.run.question.options))
+	model = updated.(Model)
+	if model.run.correct != 1 || model.run.wrong != 0 {
+		t.Fatal("answer input should be ignored while the result is locked")
+	}
+	for i := 0; i < 80; i++ {
+		updated, _ = model.updateFrame()
+		model = updated.(Model)
+	}
+	if len(model.run.floaters) == 0 || !model.run.combatLocked {
+		t.Fatal("impact disappeared before confirmation")
+	}
+
+	model = confirmCombatResult(t, model)
+	if model.run.combatLocked || len(model.run.floaters) != 0 {
+		t.Fatal("impact did not clear after confirmation")
+	}
+}
+
+func TestPauseAndResultHoldFreezeClock(t *testing.T) {
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.Local)
+	model := NewModel(21)
+	model.now = func() time.Time { return now }
+	started, _ := model.startRun()
+	model = started.(Model)
+
+	model.run.hitFlash = 3
+	model.run.monsterTicks = 2
+	remaining := model.run.remaining
+	endsAt := model.run.endsAt
+	updated, _ := model.updatePlayingKey("p")
+	model = updated.(Model)
+	if !model.run.paused {
+		t.Fatal("pause did not activate")
+	}
+
+	now = now.Add(20 * time.Second)
+	updated, _ = model.updateTick()
+	model = updated.(Model)
+	updated, _ = model.updateFrame()
+	model = updated.(Model)
+	if model.run.remaining != remaining || model.run.monsterTicks != 2 || model.run.hitFlash != 3 {
+		t.Fatal("pause did not freeze the clock, monsters, and animation")
+	}
+	if !model.run.endsAt.Equal(endsAt) {
+		t.Fatal("paused clock changed endsAt before resuming")
+	}
+
+	updated, _ = model.updatePlayingKey("p")
+	model = updated.(Model)
+	if model.run.paused || !model.run.endsAt.Equal(endsAt.Add(20*time.Second)) {
+		t.Fatalf("resume clock = %v, want %v", model.run.endsAt, endsAt.Add(20*time.Second))
+	}
+
+	model = combatModel(t, slimeKind)
+	clockNow := time.Date(2026, 11, 26, 13, 0, 0, 0, time.Local)
+	model.now = func() time.Time { return clockNow }
+	model.run.endsAt = clockNow.Add(RunDuration)
+	model.run.remaining = RunDuration
+	correct := model.run.question.correct
+	updated, _ = model.answer(correct)
+	model = updated.(Model)
+	heldRemaining := model.run.remaining
+	clockNow = clockNow.Add(15 * time.Second)
+	updated, _ = model.updateTick()
+	model = updated.(Model)
+	if model.run.remaining != heldRemaining {
+		t.Fatal("result screen did not hold the run clock")
+	}
+	model = confirmCombatResult(t, model)
+	updated, _ = model.updateTick()
+	model = updated.(Model)
+	if model.run.remaining != heldRemaining {
+		t.Fatalf("remaining after result = %v, want %v", model.run.remaining, heldRemaining)
+	}
+}
+
+func TestSkillCatalogOffersThreeDistinctChoices(t *testing.T) {
+	if len(skillCatalog) < 12 {
+		t.Fatalf("skills = %d, want at least 12", len(skillCatalog))
+	}
+	model := combatModel(t, slimeKind)
+	model.offerSkills()
+	seen := map[string]bool{}
+	for _, skill := range model.run.skillChoices {
+		if seen[skill.Name] {
+			t.Fatalf("duplicate skill choice %q", skill.Name)
+		}
+		seen[skill.Name] = true
+	}
+}
+
+func TestViewsFitMinimumTerminal(t *testing.T) {
+	assertFits := func(t *testing.T, name string, model Model) {
+		t.Helper()
+		view := model.View()
+		if width := lipgloss.Width(view); width > 80 {
+			t.Errorf("%s width = %d, want <= 80", name, width)
+		}
+		lines := strings.Split(view, "\n")
+		if len(lines) > 24 {
+			t.Errorf("%s height = %d, want <= 24", name, len(lines))
+		}
+		for index, line := range lines {
+			if width := lipgloss.Width(line); width > 80 {
+				t.Errorf("%s line %d width = %d, want <= 80", name, index+1, width)
+			}
+		}
+	}
+
+	selectModel := NewModel(13)
+	selectModel.width = 80
+	selectModel.height = 24
+	assertFits(t, "select", selectModel)
+
+	selectModel.screen = screenMode
+	assertFits(t, "mode", selectModel)
+
+	study := selectModel.startStudy(studyFull)
+	assertFits(t, "study prompt", study)
+	study.study.stage = studyReveal
+	assertFits(t, "study reveal", study)
+	study.study.stage = studyDone
+	assertFits(t, "study result", study)
+
+	exploration := startedModel(t)
+	exploration.width = 80
+	exploration.height = 24
+	assertFits(t, "exploration", exploration)
+
+	combat := combatModel(t, bossKind)
+	combat.width = 80
+	combat.height = 24
+	combat.run.addFloater(88, "CRIT", floaterCrit)
+	assertFits(t, "combat", combat)
+
+	combat.run.inventory["bomb"] = 1
+	combat.run.bagOpen = true
+	assertFits(t, "bag", combat)
+
+	combat.run.bagOpen = false
+	combat.run.combatLocked = true
+	combat.run.pendingKill = true
+	combat.run.lastResult = "TARGET DESTROYED"
+	combat.run.lastCorrect = true
+	combat.run.lastLoot = "锋利之剑 [RARE] · 已装备"
+	combat.run.floaters = nil
+	combat.run.addFloater(maxCombatDamage, "CRIT", floaterCrit)
+	assertFits(t, "combat result", combat)
+
+	combat.run.paused = true
+	assertFits(t, "paused", combat)
+	combat.run.paused = false
+
+	combat.screen = screenSettlement
+	combat.run.outcome = outcomeVictory
+	assertFits(t, "settlement", combat)
 }

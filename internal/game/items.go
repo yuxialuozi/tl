@@ -47,6 +47,11 @@ type groundItem struct {
 	item itemSpec
 }
 
+type lootEntry struct {
+	id     string
+	weight int
+}
+
 var itemCatalog = []itemSpec{
 	{
 		id:          "health_potion",
@@ -194,40 +199,91 @@ func itemByID(id string) (itemSpec, bool) {
 	return itemSpec{}, false
 }
 
-func rollRarity(rng *rand.Rand, kind monsterKind) itemRarity {
-	roll := rng.Intn(100)
-	if kind == bossKind {
-		switch {
-		case roll < 10:
-			return rarityCommon
-		case roll < 50:
-			return rarityRare
-		default:
-			return rarityEpic
-		}
-	}
-	switch {
-	case roll < 60:
-		return rarityCommon
-	case roll < 92:
-		return rarityRare
-	default:
-		return rarityEpic
-	}
+var monsterLoot = map[monsterKind]map[itemRarity][]string{
+	slimeKind: {
+		rarityCommon: {"health_potion", "bomb", "wood_sword"},
+		rarityRare:   {"combo_core"},
+	},
+	skeletonKind: {
+		rarityCommon: {"health_potion", "ward_scroll"},
+		rarityRare:   {"focus_potion", "iron_sword", "memory_ring", "vampire_fang"},
+	},
+	gargoyleKind: {
+		rarityRare: {"sharp_sword", "crit_rune", "momentum_necklace", "vitality_amulet"},
+		rarityEpic: {"flame_sword", "guard_charm"},
+	},
+	bossKind: {
+		rarityRare: {"memory_ring", "sharp_sword"},
+		rarityEpic: {"flame_sword", "guard_charm"},
+	},
+}
+
+var monsterRarityWeights = map[monsterKind][3]int{
+	slimeKind:    {90, 10, 0},
+	skeletonKind: {60, 40, 0},
+	gargoyleKind: {0, 75, 25},
+	bossKind:     {0, 25, 75},
+}
+
+var startingLootTable = []lootEntry{
+	{id: "health_potion", weight: 25},
+	{id: "focus_potion", weight: 15},
+	{id: "ward_scroll", weight: 15},
+	{id: "iron_sword", weight: 20},
+	{id: "memory_ring", weight: 15},
+	{id: "vitality_amulet", weight: 10},
 }
 
 func randomItem(rng *rand.Rand, kind monsterKind) itemSpec {
-	rarity := rollRarity(rng, kind)
-	pool := make([]itemSpec, 0, len(itemCatalog))
-	for _, item := range itemCatalog {
-		if item.rarity == rarity {
-			pool = append(pool, item)
+	weights := monsterRarityWeights[kind]
+	type rollGroup struct {
+		rarity itemRarity
+		weight int
+	}
+	groups := make([]rollGroup, 0, 3)
+	total := 0
+	for rarity := rarityCommon; rarity <= rarityEpic; rarity++ {
+		if weights[rarity] <= 0 || len(monsterLoot[kind][rarity]) == 0 {
+			continue
+		}
+		groups = append(groups, rollGroup{rarity: rarity, weight: weights[rarity]})
+		total += weights[rarity]
+	}
+	if total > 0 {
+		roll := rng.Intn(total)
+		rarity := rarityCommon
+		for _, group := range groups {
+			roll -= group.weight
+			if roll < 0 {
+				rarity = group.rarity
+				break
+			}
+		}
+		pool := monsterLoot[kind][rarity]
+		if len(pool) > 0 {
+			if item, ok := itemByID(pool[rng.Intn(len(pool))]); ok {
+				return item
+			}
 		}
 	}
-	if len(pool) == 0 {
-		return itemCatalog[0]
+	return itemCatalog[0]
+}
+
+func randomGroundItem(rng *rand.Rand) itemSpec {
+	total := 0
+	for _, entry := range startingLootTable {
+		total += entry.weight
 	}
-	return pool[rng.Intn(len(pool))]
+	roll := rng.Intn(total)
+	for _, entry := range startingLootTable {
+		roll -= entry.weight
+		if roll < 0 {
+			if item, ok := itemByID(entry.id); ok {
+				return item
+			}
+		}
+	}
+	return itemCatalog[0]
 }
 
 func rarityName(rarity itemRarity) string {
@@ -245,10 +301,12 @@ func (r *runState) addItem(item itemSpec) string {
 	r.inventory[item.id]++
 	switch item.category {
 	case categoryWeapon:
-		if item.weaponDamage > r.weaponBonus {
-			r.weaponBonus = item.weaponDamage
+		if item.weaponDamage > r.equippedWeaponDamage {
+			skillBonus := max(0, r.weaponBonus-r.equippedWeaponDamage)
+			r.equippedWeaponDamage = item.weaponDamage
+			r.weaponBonus = item.weaponDamage + skillBonus
 			r.equippedWeapon = item.name
-			return fmt.Sprintf("已装备 %s，基础伤害 +%d", item.name, item.weaponDamage)
+			return fmt.Sprintf("已装备 %s，基础伤害 +%d", item.name, r.weaponBonus)
 		}
 		return fmt.Sprintf("%s 已存入背包", item.name)
 	case categoryAccessory, categoryPassive:

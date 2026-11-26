@@ -65,7 +65,7 @@ Commands:
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	root.Flags().BoolVar(&gameMode, "game", false, "Start the five-minute vocabulary raid")
+	root.Flags().BoolVar(&gameMode, "game", false, "Start the vocabulary study and raid dungeon")
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	return root

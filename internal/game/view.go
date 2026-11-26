@@ -26,8 +26,12 @@ func (m Model) View() string {
 	switch m.screen {
 	case screenSelect:
 		return m.selectView()
+	case screenMode:
+		return m.modeView()
 	case screenPlaying:
 		return m.playingView()
+	case screenStudy:
+		return m.studyView()
 	case screenSettlement:
 		return m.settlementView()
 	default:
@@ -47,28 +51,26 @@ func (m Model) selectView() string {
 		titleStyle.Render("   ╚═╝   ╚══════╝"),
 		"",
 		accentStyle.Render("L E X I C O N   R A I D"),
-		mutedStyle.Render("ROGUELIKE WORD DUNGEON // 5 MINUTE RUN"),
+		mutedStyle.Render("VOCABULARY DUNGEON // STUDY OR RAID"),
 	)
 
 	var bookLines []string
 	for index, book := range m.books {
-		marker := "  "
-		name := book.Name
+		line := fmt.Sprintf("%-22s %s  %s", book.Name, book.Description, mutedStyle.Render(fmt.Sprintf("%d WORDS", len(book.Words))))
 		if index == m.selected {
-			marker = "▶ "
-			name = titleStyle.Render(book.Name)
+			line = selectedStyle.Render("▶ " + line)
+		} else {
+			line = "  " + line
 		}
-		description := mutedStyle.Render(book.Description)
-		count := mutedStyle.Render(fmt.Sprintf("%d WORDS", len(book.Words)))
-		bookLines = append(bookLines, fmt.Sprintf("%s%s  %s", marker, name, description), "    "+count, "")
+		bookLines = append(bookLines, line)
 	}
 	menu := panelStyle.Width(width).Render(strings.Join(bookLines, "\n"))
 
 	footer := lipgloss.JoinVertical(
 		lipgloss.Left,
 		"",
-		textStyle.Render("↑/↓ 或 J/K 选择词书    ENTER 开始    Q 退出"),
-		mutedStyle.Render("探索随机地牢 · 碰撞怪物开战 · 击败怪物掉落装备"),
+		textStyle.Render("↑/↓ 或 J/K 选择词书    ENTER 选择模式    Q 退出"),
+		mutedStyle.Render("学习模式完整过词书 · 错词巩固 · 5 分钟词汇 Raid"),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, "", menu, footer)
@@ -78,14 +80,32 @@ func (m Model) playingView() string {
 	if m.run == nil {
 		return "raid state unavailable"
 	}
+	if m.run.paused {
+		return m.pausedView()
+	}
 	header := m.playingHeader()
 	left := m.mapPanel()
+	if m.run.inCombat {
+		left = m.encounterPanel()
+	}
 	rightWidth := max(40, m.width-lipgloss.Width(left)-4)
 	right := m.explorePanel(rightWidth)
 	footer := mutedStyle.Render(" WASD / ↑↓←→ 移动 · 碰撞怪物开战 · 踩到 ? 拾取 · Q 退出")
-	if m.run.inCombat {
+	if m.run.bagOpen {
+		right = m.bagPanel(rightWidth)
+		footer = mutedStyle.Render(" ↑↓ / J/K 选择 · ENTER 使用 · E / ESC 关闭 · P 暂停 · Q 退出")
+	} else if m.run.awaitingSkill {
+		right = m.skillPanel(rightWidth)
+		footer = mutedStyle.Render(" 1-3 选择技能 · P 暂停 · Q 退出")
+	} else if m.run.inCombat {
 		right = m.battlePanel(rightWidth)
-		footer = mutedStyle.Render(" A-D / 1-4 答题 · H 药水 · F 专注 · X 炸弹 · R 卷轴 · Q 退出")
+		if m.run.combatLocked {
+			footer = mutedStyle.Render(" ENTER 继续 · P 暂停 · Q 退出")
+		} else {
+			footer = mutedStyle.Render(" A-D / 1-4 答题 · E 背包 · P 暂停 · Q 退出")
+		}
+	} else {
+		footer = mutedStyle.Render(" WASD / ↑↓←→ 移动 · 碰撞怪物开战 · E 背包 · P 暂停 · Q 退出")
 	}
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
@@ -94,9 +114,13 @@ func (m Model) playingView() string {
 func (m Model) playingHeader() string {
 	run := m.run
 	left := titleStyle.Render("TL // LEXICON RAID")
+	timeLabel := "TIME " + formatRemaining(run.remaining)
+	if run.combatLocked {
+		timeLabel = "TIME HELD"
+	}
 	right := fmt.Sprintf(
 		"%s   %s   %s   %s",
-		accentStyle.Render("TIME "+formatRemaining(run.remaining)),
+		accentStyle.Render(timeLabel),
 		textStyle.Render("COMBO "+fmt.Sprintf("%02d", run.combo)),
 		textStyle.Render(fmt.Sprintf("WORDS %d", run.correct)),
 		mutedStyle.Render(run.book.Name),
@@ -141,15 +165,11 @@ func (m Model) mapPanel() string {
 		lines = append(lines, line.String())
 	}
 
-	weapon := run.equippedWeapon
-	if run.weaponBonus > 0 {
-		weapon = fmt.Sprintf("%s +%d", weapon, run.weaponBonus)
-	}
 	lines = append(
 		lines,
 		mutedStyle.Render(strings.Repeat("─", mapWidth)),
 		textStyle.Render("PLAYER  ")+hpBar(run.playerHP, run.playerMaxHP, 17),
-		textStyle.Render(fmt.Sprintf("COMBO %02d   %s", run.combo, weapon)),
+		textStyle.Render(fmt.Sprintf("COMBO %02d   %s", run.combo, weaponLabel(run))),
 	)
 	return panelStyle.Width(mapWidth + 2).Render(strings.Join(lines, "\n"))
 }
@@ -158,12 +178,11 @@ func (m Model) explorePanel(width int) string {
 	run := m.run
 	lines := []string{
 		accentStyle.Render("SECTOR // EXPLORATION"),
-		textStyle.Render("方向键 / WASD 移动，碰到怪物会进入战斗"),
+		textStyle.Render("WASD 移动 · 碰到怪物进入战斗"),
 		textStyle.Render("HP ") + hpBar(run.playerHP, run.playerMaxHP, 16) + textStyle.Render(fmt.Sprintf(" %d/%d", run.playerHP, run.playerMaxHP)),
 		textStyle.Render("WEAPON   ") + textStyle.Render(weaponLabel(run)),
-		textStyle.Render("PASSIVE  ") + mutedStyle.Render(passiveSummary(run)),
-		textStyle.Render(fmt.Sprintf("[H] 生命药水 x%d   [F] 专注药水 x%d", run.inventory["health_potion"], run.inventory["focus_potion"])),
-		textStyle.Render(fmt.Sprintf("[X] 炸弹 x%d       [R] 护佑卷轴 x%d", run.inventory["bomb"], run.inventory["ward_scroll"])),
+		textStyle.Render("PASSIVE  ") + mutedStyle.Render(clipPlain(passiveSummary(run), max(12, width-12))),
+		textStyle.Render("[E] 背包  ") + mutedStyle.Render(consumableSummary(run)),
 		"",
 		sectionStyle.Render("MONSTERS"),
 		monsterLegend(run),
@@ -172,7 +191,7 @@ func (m Model) explorePanel(width int) string {
 		mutedStyle.Render(strings.Repeat("─", max(20, width-2))),
 		sectionStyle.Render("SYSTEM LOG"),
 	}
-	lines = append(lines, logLines(run, 5)...)
+	lines = append(lines, logLines(run, 5, width)...)
 	return panelStyle.Width(width + 2).Render(strings.Join(lines, "\n"))
 }
 
@@ -181,38 +200,34 @@ func (m Model) battlePanel(width int) string {
 	if run.combat == nil {
 		return "combat state unavailable"
 	}
-	enemy := run.combat.enemy
+	if run.combatLocked {
+		return m.resultPanel(width)
+	}
 	lines := []string{
-		dangerStyle.Render("ENEMY // " + enemy.label()),
-		textStyle.Render(fmt.Sprintf("HP %s %d/%d", hpBar(enemy.hp, enemy.maxHP, 20), enemy.hp, enemy.maxHP)),
-		textStyle.Render(enemyStatus(run.combat)),
+		accentStyle.Render("TARGET LOCK // 选择中文释义"),
+		playerHealthLine(run, 18),
+		textStyle.Render(fmt.Sprintf("COMBO %02d · %s", run.combo, weaponLabel(run))),
 		"",
+		wordHeaderLine(run.question.word),
 	}
-
-	if run.awaitingSkill {
-		lines = append(lines, m.skillLines()...)
-	} else {
-		lines = append(lines, m.questionLines()...)
+	if run.question.word.Phonetic != "" {
+		lines = append(lines, mutedStyle.Render(run.question.word.Phonetic))
 	}
+	lines = append(lines, m.questionLines()...)
 	lines = append(
 		lines,
 		"",
-		textStyle.Render(inventoryLine(run)),
+		textStyle.Render(clipPlain(inventoryLine(run), max(16, width-2))),
 		mutedStyle.Render(strings.Repeat("─", max(20, width-2))),
 		sectionStyle.Render("SYSTEM LOG"),
 	)
-	lines = append(lines, logLines(run, 3)...)
+	lines = append(lines, logLines(run, 2, width)...)
 	return panelStyle.Width(width + 2).Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) questionLines() []string {
 	run := m.run
-	lines := []string{
-		accentStyle.Render("TARGET ACQUIRED"),
-		titleStyle.Render(run.question.word.Term),
-		textStyle.Render("选择正确的中文释义"),
-		"",
-	}
+	lines := []string{textStyle.Render("选择正确的中文释义"), ""}
 	labels := []string{"A", "B", "C", "D"}
 	for index, option := range run.question.options {
 		lines = append(lines, optionStyle.Render(fmt.Sprintf("[%s] %s", labels[index], option)))
@@ -220,20 +235,207 @@ func (m Model) questionLines() []string {
 	return lines
 }
 
-func (m Model) skillLines() []string {
+func (m Model) resultPanel(width int) string {
+	run := m.run
+	word := run.question.word
+	resultStyle := dangerStyle
+	if run.lastCorrect {
+		resultStyle = damageStyle
+	}
+	resultLine := fmt.Sprintf("%s // COMBO %02d", run.lastResult, run.combo)
+	summary := strings.Join(run.lastNotes, " · ")
+	if floater, ok := run.latestFloater(); ok && floater.value > 0 {
+		label := floater.label
+		if label == "" || label == "HIT" {
+			label = "DAMAGE"
+		}
+		damage := fmt.Sprintf("%s %03d", label, floater.value)
+		if floater.value >= maxCombatDamage {
+			damage += " MAX"
+		}
+		if summary != "" {
+			damage += " · " + summary
+		}
+		summary = damage
+	}
+	if summary == "" {
+		summary = "READ THE CARD // PRESS ENTER"
+	}
+	lines := []string{
+		resultStyle.Render(resultLine),
+		playerHealthLine(run, 18),
+		mutedStyle.Render(clipPlain(summary, max(16, width-2))),
+		"",
+		wordHeaderLine(word),
+		mutedStyle.Render(word.Phonetic),
+		"",
+		sectionStyle.Render("Definition"),
+	}
+	lines = append(lines, wrappedLimited(word.Definition, max(16, width-4), 2, textStyle)...)
+	lines = append(
+		lines,
+		"",
+		sectionStyle.Render("中文"),
+		textStyle.Render(word.Meaning),
+		"",
+		sectionStyle.Render("Examples"),
+	)
+	for _, example := range word.Examples[:min(1, len(word.Examples))] {
+		lines = append(lines, wrappedLimited("- "+example, max(16, width-4), 2, textStyle)...)
+	}
+	if run.pendingKill && run.lastLoot != "" {
+		lines = append(lines, warnStyle.Render("LOOT // "+clipPlain(run.lastLoot, max(16, width-2))))
+	}
+	lines = append(
+		lines,
+		"",
+		accentStyle.Render("ENTER 继续   P 暂停"),
+	)
+	return panelStyle.Width(width + 2).Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) skillPanel(width int) string {
+	run := m.run
 	lines := []string{
 		warnStyle.Render("LEVEL UP // 三选一技能"),
-		textStyle.Render("输入 1-3 安装一个模块"),
+		playerHealthLine(run, 18),
+		"",
+	}
+	lines = append(lines, m.skillLines(width)...)
+	lines = append(lines, accentStyle.Render("输入 1-3 安装模块"))
+	return panelStyle.Width(width + 2).Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) skillLines(width int) []string {
+	lines := []string{
+		mutedStyle.Render("选择一个强化，继续本次 Raid"),
 		"",
 	}
 	for index, skill := range m.run.skillChoices {
+		descriptionWidth := max(8, width-lipgloss.Width(skill.Name)-8)
 		lines = append(
 			lines,
-			accentStyle.Render(fmt.Sprintf("[%d] %s", index+1, skill.Name))+"  "+mutedStyle.Render(skill.Description),
+			accentStyle.Render(fmt.Sprintf("[%d] %s", index+1, skill.Name))+"  "+mutedStyle.Render(clipPlain(skill.Description, descriptionWidth)),
 		)
 	}
 	lines = append(lines, "", "")
 	return lines
+}
+
+func (m Model) pausedView() string {
+	run := m.run
+	width := min(76, max(58, m.width-8))
+	lines := []string{
+		titleStyle.Render("TL // PAUSED"),
+		mutedStyle.Render("RUN CLOCK AND ANIMATION FROZEN"),
+		"",
+		textStyle.Render("ARCHIVE  ") + titleStyle.Render(run.book.Name),
+		textStyle.Render("TIME     ") + accentStyle.Render(formatRemaining(run.remaining)),
+		playerHealthLine(run, 22),
+	}
+	if run.inCombat && run.combat != nil {
+		lines = append(lines, textStyle.Render("ENEMY    ")+dangerStyle.Render(run.combat.enemy.label()))
+	}
+	lines = append(
+		lines,
+		textStyle.Render(fmt.Sprintf("COMBO    %02d   WORDS %d   KILLS %d", run.combo, run.correct, run.kills)),
+		"",
+		accentStyle.Render("P 继续    Q 退出"),
+	)
+	return panelStyle.Width(width).Render(strings.Join(lines, "\n"))
+}
+
+func wordHeaderLine(word Word) string {
+	header := titleStyle.Render(word.Term)
+	meta := make([]string, 0, 2)
+	if word.PartOfSpeech != "" {
+		meta = append(meta, word.PartOfSpeech)
+	}
+	if word.Category != "" {
+		meta = append(meta, word.Category)
+	}
+	if len(meta) > 0 {
+		header += mutedStyle.Render(" · " + strings.Join(meta, " · "))
+	}
+	return header
+}
+
+func wrappedLimited(text string, width, maxLines int, style lipgloss.Style) []string {
+	lines := wrapText(text, width)
+	if len(lines) == 0 {
+		return nil
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines[len(lines)-1] = clipPlain(lines[len(lines)-1], max(1, width-1)) + "…"
+	}
+	for index := range lines {
+		lines[index] = style.Render(lines[index])
+	}
+	return lines
+}
+
+func wrapText(text string, width int) []string {
+	if width <= 0 || strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	lines := make([]string, 0, 3)
+	for _, paragraph := range strings.Split(text, "\n") {
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			continue
+		}
+		line := ""
+		for _, word := range words {
+			if lipgloss.Width(word) > width {
+				if line != "" {
+					lines = append(lines, line)
+					line = ""
+				}
+				parts := splitByWidth(word, width)
+				if len(parts) > 1 {
+					lines = append(lines, parts[:len(parts)-1]...)
+				}
+				line = parts[len(parts)-1]
+				continue
+			}
+			candidate := word
+			if line != "" {
+				candidate = line + " " + word
+			}
+			if lipgloss.Width(candidate) <= width {
+				line = candidate
+				continue
+			}
+			lines = append(lines, line)
+			line = word
+		}
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func splitByWidth(text string, width int) []string {
+	parts := make([]string, 0, 2)
+	var current strings.Builder
+	used := 0
+	for _, char := range text {
+		charWidth := lipgloss.Width(string(char))
+		if used > 0 && used+charWidth > width {
+			parts = append(parts, current.String())
+			current.Reset()
+			used = 0
+		}
+		current.WriteRune(char)
+		used += charWidth
+	}
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+	return parts
 }
 
 func (m Model) settlementView() string {
@@ -260,10 +462,12 @@ func (m Model) settlementView() string {
 	if total > 0 {
 		accuracy = float64(run.correct) / float64(total) * 100
 	}
+	const boxInner = 46
+	boxTitle := "RUN COMPLETE // " + string(run.outcome)
 	lines := []string{
-		outcomeStyle.Render("╔══════════════════════════════════════════════╗"),
-		outcomeStyle.Render("║   RUN COMPLETE // " + string(run.outcome) + "              ║"),
-		outcomeStyle.Render("╚══════════════════════════════════════════════╝"),
+		outcomeStyle.Render("╔" + strings.Repeat("═", boxInner) + "╗"),
+		outcomeStyle.Render("║ " + fmt.Sprintf("%-*s", boxInner-2, boxTitle) + " ║"),
+		outcomeStyle.Render("╚" + strings.Repeat("═", boxInner) + "╝"),
 		"",
 		accentStyle.Render(subtitle),
 		"",
@@ -329,37 +533,30 @@ func monsterLegend(run *runState) string {
 		gargoyleStyle.Render("g") + mutedStyle.Render(fmt.Sprintf("石像鬼x%d", counts[gargoyleKind]))
 }
 
-func enemyStatus(combat *combatState) string {
-	enemy := combat.enemy
-	var status string
-	switch enemy.kind {
-	case slimeKind:
-		status = "NO COUNTER"
-	case skeletonKind:
-		status = fmt.Sprintf("COUNTER %d", enemy.counterDamage())
-	case gargoyleKind:
-		status = fmt.Sprintf("WARD %d/%d · COUNTER %d", enemy.guard, enemy.spec().guard, enemy.counterDamage())
-	case bossKind:
-		status = fmt.Sprintf("PHASE %d/3 · WARD %d · COUNTER %d", enemy.phase, enemy.guard, enemy.counterDamage())
-	}
-	if combat.focusNext {
-		status += " · FOCUS x2"
-	}
-	return status
+func inventoryLine(run *runState) string {
+	return "[E] 背包 · " + consumableSummary(run) + " · SHIELD " + shieldLabel(run.shield)
 }
 
-func inventoryLine(run *runState) string {
-	return fmt.Sprintf("H x%d  F x%d  X x%d  R x%d   SHIELD %s",
+func playerHealthLine(run *runState, barWidth int) string {
+	return textStyle.Render("PLAYER HP  ") +
+		hpBar(run.playerHP, run.playerMaxHP, barWidth) +
+		textStyle.Render(fmt.Sprintf(" %d/%d", run.playerHP, run.playerMaxHP))
+}
+
+func consumableSummary(run *runState) string {
+	return fmt.Sprintf("药%d 专%d 炸%d 卷%d",
 		run.inventory["health_potion"],
 		run.inventory["focus_potion"],
 		run.inventory["bomb"],
 		run.inventory["ward_scroll"],
-		shieldLabel(run.shield),
 	)
 }
 
 func weaponLabel(run *runState) string {
 	if run.equippedWeapon == "" || run.equippedWeapon == "无" {
+		if run.weaponBonus > 0 {
+			return fmt.Sprintf("徒手 +%d", run.weaponBonus)
+		}
 		return "无"
 	}
 	return fmt.Sprintf("%s +%d", run.equippedWeapon, run.weaponBonus)
@@ -388,16 +585,42 @@ func passiveSummary(run *runState) string {
 	return strings.Join(parts, " · ")
 }
 
-func logLines(run *runState, count int) []string {
+func logLines(run *runState, count, width int) []string {
 	start := max(0, len(run.logs)-count)
 	lines := make([]string, 0, count)
 	for _, entry := range run.logs[start:] {
-		lines = append(lines, mutedStyle.Render("> ")+textStyle.Render(entry))
+		lines = append(lines, mutedStyle.Render("> ")+textStyle.Render(clipPlain(entry, width-2)))
 	}
 	for len(lines) < count {
 		lines = append(lines, mutedStyle.Render(">"))
 	}
 	return lines
+}
+
+func clipPlain(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	const suffix = "..."
+	if width <= len(suffix) {
+		return suffix[:width]
+	}
+	limit := width - len(suffix)
+	var result strings.Builder
+	used := 0
+	for _, char := range value {
+		part := string(char)
+		partWidth := lipgloss.Width(part)
+		if used+partWidth > limit {
+			break
+		}
+		result.WriteString(part)
+		used += partWidth
+	}
+	return result.String() + suffix
 }
 
 func hpBar(value, maximum, width int) string {

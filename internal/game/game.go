@@ -15,15 +15,18 @@ const (
 	RunDuration = 5 * time.Minute
 	skillEvery  = 3
 
-	monsterMoveEvery = 2
-	startingLoot     = 7
+	monsterMoveEvery = 5
+	startingLoot     = 3
+	maxCombatDamage  = 999
 )
 
 type screen int
 
 const (
 	screenSelect screen = iota
+	screenMode
 	screenPlaying
+	screenStudy
 	screenSettlement
 )
 
@@ -55,43 +58,60 @@ type runState struct {
 	items    []groundItem
 	sector   string
 
-	playerHP    int
-	playerMaxHP int
-	baseDamage  int
-	weaponBonus int
-	comboBonus  int
-	lifesteal   int
-	critChance  int
-	memoryBonus int
+	playerHP         int
+	playerMaxHP      int
+	baseDamage       int
+	weaponBonus      int
+	comboBonus       int
+	lifesteal        int
+	critChance       int
+	memoryBonus      int
+	counterReduction int
 
 	shield     bool
 	guardCharm bool
 	memoryRing bool
 
-	equippedWeapon    string
-	inventory         map[string]int
-	combo             int
-	maxCombo          int
-	correct           int
-	wrong             int
-	kills             int
-	correctSinceSkill int
-	awaitingSkill     bool
-	skillChoices      []Skill
-	question          question
-	lastTerm          string
-	wrongTerms        map[string]bool
-	loot              []string
+	equippedWeapon       string
+	equippedWeaponDamage int
+	inventory            map[string]int
+	combo                int
+	maxCombo             int
+	correct              int
+	wrong                int
+	kills                int
+	correctSinceSkill    int
+	awaitingSkill        bool
+	skillChoices         []Skill
+	question             question
+	lastTerm             string
+	wrongTerms           map[string]bool
+	loot                 []string
 
-	inCombat     bool
-	combat       *combatState
-	monsterTicks int
-	startedAt    time.Time
-	endsAt       time.Time
-	remaining    time.Duration
-	elapsed      time.Duration
-	outcome      runOutcome
-	logs         []string
+	inCombat        bool
+	combat          *combatState
+	monsterTicks    int
+	floaters        []damageFloater
+	hitFlash        int
+	hurtFlash       int
+	paused          bool
+	clockHeldAt     time.Time
+	combatLocked    bool
+	lastResult      string
+	lastCorrect     bool
+	lastNotes       []string
+	pendingKill     bool
+	pendingDefeat   bool
+	advanceOnUnlock bool
+	lastLoot        string
+	bagOpen         bool
+	bagSelection    int
+	startedAt       time.Time
+	endsAt          time.Time
+	remaining       time.Duration
+	elapsed         time.Duration
+	outcome         runOutcome
+	logs            []string
 }
 
 // Skill is a reward selected after every three correct answers.
@@ -145,9 +165,63 @@ var skillCatalog = []Skill{
 			r.lifesteal += 3
 		},
 	},
+	{
+		Name:        "PRECISION ARRAY",
+		Description: "暴击率 +15%",
+		apply: func(r *runState) {
+			r.critChance = min(80, r.critChance+15)
+		},
+	},
+	{
+		Name:        "MEMORY CACHE",
+		Description: "答错过的单词再次答对时，伤害 +10",
+		apply: func(r *runState) {
+			r.memoryBonus += 10
+		},
+	},
+	{
+		Name:        "WEAPON OVERDRIVE",
+		Description: "武器伤害 +4",
+		apply: func(r *runState) {
+			r.weaponBonus += 4
+		},
+	},
+	{
+		Name:        "FIREWALL",
+		Description: "受到的答错反击伤害 -4",
+		apply: func(r *runState) {
+			r.counterReduction = min(20, r.counterReduction+4)
+		},
+	},
+	{
+		Name:        "BATTLE TRANCE",
+		Description: "下一道答对造成双倍伤害",
+		apply: func(r *runState) {
+			if r.combat != nil {
+				r.combat.focusNext = true
+			}
+		},
+	},
+	{
+		Name:        "IRON HEART",
+		Description: "最大生命 +10，并立即恢复 10 HP",
+		apply: func(r *runState) {
+			r.playerMaxHP += 10
+			r.playerHP = min(r.playerMaxHP, r.playerHP+10)
+		},
+	},
+	{
+		Name:        "VAMPIRE PROTOCOL",
+		Description: "每次答对恢复 2 HP，暴击率 +5%",
+		apply: func(r *runState) {
+			r.lifesteal += 2
+			r.critChance = min(80, r.critChance+5)
+		},
+	},
 }
 
 type tickMsg time.Time
+type frameMsg time.Time
 
 // Model is the Bubble Tea model for the word raid game.
 type Model struct {
@@ -156,20 +230,25 @@ type Model struct {
 	height   int
 	books    []Wordbook
 	selected int
+	mode     int
 	rng      *rand.Rand
 	now      func() time.Time
 	run      *runState
+	study    *studyState
+
+	reviewTerms map[string]map[string]bool
 }
 
 // NewModel creates a fresh game model. The seed controls map, monsters, and words.
 func NewModel(seed int64) Model {
 	return Model{
-		screen: screenSelect,
-		width:  112,
-		height: 34,
-		books:  availableWordbooks(),
-		rng:    rand.New(rand.NewSource(seed)),
-		now:    time.Now,
+		screen:      screenSelect,
+		width:       112,
+		height:      34,
+		books:       availableWordbooks(),
+		rng:         rand.New(rand.NewSource(seed)),
+		now:         time.Now,
+		reviewTerms: map[string]map[string]bool{},
 	}
 }
 
@@ -198,6 +277,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		return m.updateTick()
+	case frameMsg:
+		return m.updateFrame()
 	case tea.KeyMsg:
 		return m.updateKey(message)
 	default:
@@ -219,7 +300,21 @@ func (m Model) updateKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			m.selected = (m.selected + 1) % len(m.books)
 		case "enter", " ":
-			return m.startRun()
+			m.mode = 0
+			m.screen = screenMode
+		case "q":
+			return m, tea.Quit
+		}
+	case screenMode:
+		switch key {
+		case "up", "k":
+			m.mode = (m.mode - 1 + len(gameModes)) % len(gameModes)
+		case "down", "j":
+			m.mode = (m.mode + 1) % len(gameModes)
+		case "enter", " ":
+			return m.startMode()
+		case "esc", "backspace":
+			m.screen = screenSelect
 		case "q":
 			return m, tea.Quit
 		}
@@ -228,6 +323,8 @@ func (m Model) updateKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m.updatePlayingKey(key)
+	case screenStudy:
+		return m.updateStudyKey(key)
 	case screenSettlement:
 		switch key {
 		case "enter", "r", " ":
@@ -242,6 +339,13 @@ func (m Model) updateKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updatePlayingKey(key string) (tea.Model, tea.Cmd) {
 	if m.run == nil {
+		return m, nil
+	}
+	if key == "p" {
+		m.togglePause()
+		return m, nil
+	}
+	if m.run.paused {
 		return m, nil
 	}
 	if m.run.awaitingSkill {
@@ -264,6 +368,9 @@ func (m Model) updatePlayingKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.run.bagOpen {
+		return m.updateBagKey(key)
+	}
 
 	if m.run.inCombat {
 		return m.updateCombatKey(key)
@@ -278,11 +385,19 @@ func (m Model) updatePlayingKey(key string) (tea.Model, tea.Cmd) {
 		return m.movePlayer(-1, 0)
 	case "right", "l", "d":
 		return m.movePlayer(1, 0)
+	case "e", "b", "tab":
+		m.openBag()
 	}
 	return m, nil
 }
 
 func (m Model) updateCombatKey(key string) (tea.Model, tea.Cmd) {
+	if m.run.combatLocked {
+		if key == "enter" || key == " " {
+			return m.resolveCombatLock()
+		}
+		return m, nil
+	}
 	switch key {
 	case "a", "1":
 		return m.answer(0)
@@ -292,17 +407,45 @@ func (m Model) updateCombatKey(key string) (tea.Model, tea.Cmd) {
 		return m.answer(2)
 	case "d", "4":
 		return m.answer(3)
-	case "h":
-		return m.useConsumable("health_potion")
-	case "f":
-		return m.useConsumable("focus_potion")
-	case "r":
-		return m.useConsumable("ward_scroll")
-	case "x":
-		return m.useConsumable("bomb")
+	case "e", "tab":
+		m.openBag()
 	default:
 		return m, nil
 	}
+	return m, nil
+}
+
+func (m *Model) togglePause() {
+	run := m.run
+	if run == nil {
+		return
+	}
+	now := m.now()
+	if run.paused {
+		run.paused = false
+		run.resumeClock(now)
+		return
+	}
+	run.paused = true
+	run.holdClock(now)
+}
+
+func (r *runState) holdClock(now time.Time) {
+	if r.clockHeldAt.IsZero() {
+		r.clockHeldAt = now
+	}
+}
+
+func (r *runState) resumeClock(now time.Time) {
+	if r.paused || r.combatLocked || r.clockHeldAt.IsZero() {
+		return
+	}
+	held := now.Sub(r.clockHeldAt)
+	if held > 0 {
+		r.startedAt = r.startedAt.Add(held)
+		r.endsAt = r.endsAt.Add(held)
+	}
+	r.clockHeldAt = time.Time{}
 }
 
 func (m Model) startRun() (tea.Model, tea.Cmd) {
@@ -336,7 +479,7 @@ func (m Model) startRun() (tea.Model, tea.Cmd) {
 	m.spawnItems(run)
 	m.run = run
 	m.screen = screenPlaying
-	return m, tickCmd()
+	return m, tea.Batch(tickCmd(), frameCmd())
 }
 
 func (m Model) spawnMonsters(run *runState) {
@@ -346,12 +489,12 @@ func (m Model) spawnMonsters(run *runState) {
 	occupied[boss.pos] = true
 
 	kinds := []monsterKind{
-		slimeKind, slimeKind, slimeKind,
-		skeletonKind, skeletonKind,
-		gargoyleKind, gargoyleKind,
+		slimeKind, slimeKind,
+		skeletonKind,
+		gargoyleKind,
 	}
 	for _, kind := range kinds {
-		pos, ok := m.freeCell(run, occupied, 3)
+		pos, ok := m.freeCell(run, occupied, 5)
 		if !ok {
 			continue
 		}
@@ -366,11 +509,11 @@ func (m Model) spawnItems(run *runState) {
 		occupied[monster.pos] = true
 	}
 	for i := 0; i < startingLoot; i++ {
-		pos, ok := m.freeCell(run, occupied, 1)
+		pos, ok := m.freeCell(run, occupied, 8)
 		if !ok {
 			break
 		}
-		run.items = append(run.items, groundItem{pos: pos, item: randomItem(m.rng, slimeKind)})
+		run.items = append(run.items, groundItem{pos: pos, item: randomGroundItem(m.rng)})
 		occupied[pos] = true
 	}
 }
@@ -396,9 +539,30 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+func frameCmd() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(now time.Time) tea.Msg {
+		return frameMsg(now)
+	})
+}
+
+func (m Model) updateFrame() (tea.Model, tea.Cmd) {
+	if m.screen != screenPlaying || m.run == nil {
+		return m, nil
+	}
+	if m.run.paused {
+		return m, frameCmd()
+	}
+	m.run.hitFlash = max(0, m.run.hitFlash-1)
+	m.run.hurtFlash = max(0, m.run.hurtFlash-1)
+	return m, frameCmd()
+}
+
 func (m Model) updateTick() (tea.Model, tea.Cmd) {
 	if m.screen != screenPlaying || m.run == nil {
 		return m, nil
+	}
+	if m.run.paused || m.run.combatLocked {
+		return m, tickCmd()
 	}
 	m.run.remaining = m.run.endsAt.Sub(m.now())
 	if m.run.remaining <= 0 {
@@ -460,7 +624,7 @@ func (m *Model) monsterStep(monster monster, occupied map[point]bool) point {
 		return monster.pos
 	}
 
-	if manhattan(monster.pos, m.run.player) <= 7 && m.rng.Intn(100) < 70 {
+	if manhattan(monster.pos, m.run.player) <= 6 && m.rng.Intn(100) < 40 {
 		best := candidates[0]
 		for _, candidate := range candidates[1:] {
 			if manhattan(candidate, m.run.player) < manhattan(best, m.run.player) {
@@ -499,7 +663,18 @@ func (m Model) beginCombat(index int) Model {
 	}
 	run.inCombat = true
 	run.combat = &combatState{enemy: run.monsters[index], enemyIndex: index}
-	run.shield = run.guardCharm
+	run.shield = run.shield || run.guardCharm
+	run.bagOpen = false
+	run.combatLocked = false
+	run.pendingKill = false
+	run.pendingDefeat = false
+	run.advanceOnUnlock = false
+	run.lastResult = ""
+	run.lastNotes = nil
+	run.lastLoot = ""
+	run.floaters = nil
+	run.hitFlash = 0
+	run.hurtFlash = 0
 	run.addLog("ENCOUNTER // " + run.monsters[index].label())
 	if run.shield {
 		run.addLog("GUARD CHARM ONLINE // 1 次答错保护")
@@ -510,7 +685,10 @@ func (m Model) beginCombat(index int) Model {
 
 func (m Model) answer(index int) (tea.Model, tea.Cmd) {
 	run := m.run
-	if run == nil || run.combat == nil || index < 0 || index >= len(run.question.options) {
+	if run == nil || run.combat == nil || run.combatLocked || run.paused || run.awaitingSkill || run.bagOpen {
+		return m, nil
+	}
+	if index < 0 || index >= len(run.question.options) {
 		return m, nil
 	}
 
@@ -533,33 +711,52 @@ func (m Model) correctAnswer(current question) (tea.Model, tea.Cmd) {
 
 	damage := run.baseDamage + run.weaponBonus + run.combo*run.comboBonus
 	notes := make([]string, 0, 3)
-	if run.memoryRing && run.wrongTerms[current.word.Term] {
+	impact := damageFloater{value: damage, label: "HIT", kind: floaterNormal}
+	if run.memoryBonus > 0 && run.wrongTerms[current.word.Term] {
 		damage += run.memoryBonus
 		delete(run.wrongTerms, current.word.Term)
-		notes = append(notes, "MEMORY +20")
+		notes = append(notes, fmt.Sprintf("MEMORY +%d", run.memoryBonus))
+		impact.kind = floaterMemory
+		impact.label = "MEMORY"
 	}
 	if combat.focusNext {
 		damage *= 2
 		combat.focusNext = false
 		notes = append(notes, "FOCUS x2")
+		impact.kind = floaterFocus
+		impact.label = "FOCUS"
 	}
 	if run.critChance > 0 && m.rng.Intn(100) < run.critChance {
 		damage *= 2
 		notes = append(notes, "CRIT x2")
+		impact.kind = floaterCrit
+		impact.label = "CRIT"
 	}
+	if damage > maxCombatDamage {
+		notes = append(notes, fmt.Sprintf("CAP %d", maxCombatDamage))
+	}
+	damage = min(damage, maxCombatDamage)
+	impact.value = damage
 
 	if enemy.guard > 0 {
 		enemy.guard--
+		run.hitFlash = 3
 		if enemy.guard > 0 {
 			run.addLog(fmt.Sprintf("WARD HIT // %s · 还需连续答对 %d 次", current.word.Term, enemy.guard))
+			run.addFloater(0, fmt.Sprintf("WARD %d", enemy.guard), floaterStatus)
 		} else {
 			run.addLog("WARD BROKEN // 防御已解除")
+			run.addFloater(0, "WARD BROKEN", floaterStatus)
 		}
-		m.afterCorrectAnswer()
+		run.lastNotes = notes
+		run.advanceOnUnlock = true
+		m.lockCombatResult("WARD HELD", true)
 		return m, nil
 	}
 
 	killed := m.damageEnemy(damage)
+	run.addFloater(impact.value, impact.label, impact.kind)
+	run.hitFlash = 4
 	if run.lifesteal > 0 {
 		run.playerHP = min(run.playerMaxHP, run.playerHP+run.lifesteal)
 	}
@@ -568,22 +765,73 @@ func (m Model) correctAnswer(current question) (tea.Model, tea.Cmd) {
 		suffix = " [" + strings.Join(notes, " · ") + "]"
 	}
 	run.addLog(fmt.Sprintf("HIT %s -%d HP COMBO x%d%s", current.word.Term, damage, run.combo, suffix))
+	run.lastNotes = notes
+	run.advanceOnUnlock = true
 
+	result := "PERFECT ANSWER"
 	if killed {
-		return m.finishCombat()
+		m.registerKill()
+		result = "TARGET DESTROYED"
 	}
-	m.afterCorrectAnswer()
+	m.lockCombatResult(result, true)
 	return m, nil
 }
 
-func (m *Model) afterCorrectAnswer() {
-	if m.run.combat == nil {
+func (m *Model) lockCombatResult(result string, correct bool) {
+	run := m.run
+	if run == nil {
 		return
 	}
+	run.combatLocked = true
+	run.lastResult = result
+	run.lastCorrect = correct
+	run.holdClock(m.now())
+}
+
+func (m *Model) clearCombatResult() {
+	run := m.run
+	if run == nil {
+		return
+	}
+	run.combatLocked = false
+	run.pendingKill = false
+	run.pendingDefeat = false
+	run.advanceOnUnlock = false
+	run.lastResult = ""
+	run.lastNotes = nil
+	run.lastLoot = ""
+	run.floaters = nil
+	run.hitFlash = 0
+	run.hurtFlash = 0
+	run.resumeClock(m.now())
+}
+
+func (m Model) resolveCombatLock() (tea.Model, tea.Cmd) {
+	run := m.run
+	if run == nil {
+		return m, nil
+	}
+	if run.pendingDefeat {
+		m.clearCombatResult()
+		m.settle(outcomeDefeat)
+		return m, nil
+	}
+
+	advance := run.advanceOnUnlock
+	pendingKill := run.pendingKill
+	m.clearCombatResult()
+	if pendingKill {
+		return m.finishCombat()
+	}
+	if !advance || run.combat == nil {
+		return m, nil
+	}
+
 	m.nextQuestion()
-	if m.run.correctSinceSkill >= skillEvery {
+	if run.correctSinceSkill >= skillEvery {
 		m.offerSkills()
 	}
+	return m, nil
 }
 
 func (m Model) wrongAnswer(current question) (tea.Model, tea.Cmd) {
@@ -604,23 +852,33 @@ func (m Model) wrongAnswer(current question) (tea.Model, tea.Cmd) {
 		run.addLog("WARD RESET // 连续答对记录已清空")
 	}
 
-	damage := enemy.counterDamage()
+	baseCounter := enemy.counterDamage()
+	damage := max(1, baseCounter-run.counterReduction)
+	result := "MISS"
 	switch {
-	case damage == 0:
+	case baseCounter == 0:
 		run.addLog(fmt.Sprintf("MISS %s = %s · 史莱姆没有反击", current.word.Term, current.word.Meaning))
+		run.addFloater(0, "NO COUNTER", floaterStatus)
+		result = "NO COUNTER"
 	case run.shield:
 		run.shield = false
 		run.addLog(fmt.Sprintf("GUARD ABSORBED // MISS %s", current.word.Term))
+		run.addFloater(0, "ABSORBED", floaterStatus)
+		result = "GUARD ABSORBED"
 	default:
 		run.playerHP = max(0, run.playerHP-damage)
 		run.addLog(fmt.Sprintf("COUNTER -%d HP // MISS %s = %s", damage, current.word.Term, current.word.Meaning))
+		run.addFloater(damage, "COUNTER", floaterCounter)
+		run.hurtFlash = 4
+		result = "COUNTER HIT"
 	}
 
+	run.advanceOnUnlock = true
 	if run.playerHP == 0 {
-		m.settle(outcomeDefeat)
-		return m, nil
+		run.pendingDefeat = true
+		result = "SIGNAL LOST"
 	}
-	m.nextQuestion()
+	m.lockCombatResult(result, false)
 	return m, nil
 }
 
@@ -642,21 +900,34 @@ func (m *Model) damageEnemy(damage int) bool {
 	return false
 }
 
+func (m *Model) registerKill() {
+	run := m.run
+	if run == nil || run.combat == nil || run.pendingKill {
+		return
+	}
+	enemy := run.combat.enemy
+	run.kills++
+	run.pendingKill = true
+
+	drop := randomItem(m.rng, enemy.kind)
+	result := run.addItem(drop)
+	lootLine := fmt.Sprintf("%s [%s] · %s", drop.name, rarityName(drop.rarity), result)
+	run.loot = append(run.loot, lootLine)
+	run.lastLoot = lootLine
+	run.addLog("LOOT // " + lootLine)
+	if enemy.kind == bossKind {
+		run.addLog("BOSS PURGED // SECTOR CLEARED")
+	}
+}
+
 func (m Model) finishCombat() (tea.Model, tea.Cmd) {
 	run := m.run
 	if run.combat == nil {
 		return m, nil
 	}
 	enemy := run.combat.enemy
-	run.kills++
-	drop := randomItem(m.rng, enemy.kind)
-	result := run.addItem(drop)
-	lootLine := fmt.Sprintf("%s [%s] · %s", drop.name, rarityName(drop.rarity), result)
-	run.loot = append(run.loot, lootLine)
-	run.addLog("LOOT // " + lootLine)
 
 	if enemy.kind == bossKind {
-		run.addLog("BOSS PURGED // SECTOR CLEARED")
 		m.settle(outcomeVictory)
 		return m, nil
 	}
@@ -667,13 +938,18 @@ func (m Model) finishCombat() (tea.Model, tea.Cmd) {
 	run.addLog(fmt.Sprintf("DEFEATED // %s · 返回地图", enemy.label()))
 	run.inCombat = false
 	run.combat = nil
+	run.bagOpen = false
 	run.question = question{}
+	run.monsterTicks = 0
+	if run.correctSinceSkill >= skillEvery {
+		m.offerSkills()
+	}
 	return m, nil
 }
 
 func (m Model) useConsumable(id string) (tea.Model, tea.Cmd) {
 	run := m.run
-	if run == nil || run.combat == nil || run.inventory[id] <= 0 {
+	if run == nil || run.inventory[id] <= 0 {
 		if run != nil {
 			run.addLog("NO ITEM // 背包中没有该道具")
 		}
@@ -681,6 +957,10 @@ func (m Model) useConsumable(id string) (tea.Model, tea.Cmd) {
 	}
 	item, ok := itemByID(id)
 	if !ok {
+		return m, nil
+	}
+	if run.combat == nil && (item.focus || item.directDamage > 0) {
+		run.addLog("COMBAT ONLY // 该道具只能在战斗中使用")
 		return m, nil
 	}
 
@@ -692,6 +972,8 @@ func (m Model) useConsumable(id string) (tea.Model, tea.Cmd) {
 		}
 		run.inventory[id]--
 		run.playerHP = min(run.playerMaxHP, run.playerHP+item.heal)
+		run.addFloater(item.heal, "HEAL", floaterHeal)
+		run.bagOpen = false
 		run.addLog(fmt.Sprintf("POTION // 恢复 %d HP", item.heal))
 	case item.focus:
 		if run.combat.focusNext {
@@ -700,14 +982,24 @@ func (m Model) useConsumable(id string) (tea.Model, tea.Cmd) {
 		}
 		run.inventory[id]--
 		run.combat.focusNext = true
+		run.addFloater(0, "FOCUS x2", floaterStatus)
+		run.bagOpen = false
 		run.addLog("POTION // 下一道答对造成双倍伤害")
 	case item.directDamage > 0:
 		run.inventory[id]--
-		killed := m.damageEnemy(item.directDamage)
-		run.addLog(fmt.Sprintf("BOMB // 对敌人造成 %d 点伤害", item.directDamage))
+		damage := min(item.directDamage, maxCombatDamage)
+		killed := m.damageEnemy(damage)
+		run.addFloater(damage, "BOMB", floaterBomb)
+		run.hitFlash = 5
+		run.bagOpen = false
+		run.addLog(fmt.Sprintf("BOMB // 对敌人造成 %d 点伤害", damage))
+		result := "BOMB STRIKE"
 		if killed {
-			return m.finishCombat()
+			m.registerKill()
+			result = "TARGET DESTROYED"
 		}
+		run.advanceOnUnlock = false
+		m.lockCombatResult(result, true)
 	case item.shield:
 		if run.shield {
 			run.addLog("GUARD ACTIVE // 护佑卷轴未消耗")
@@ -715,7 +1007,58 @@ func (m Model) useConsumable(id string) (tea.Model, tea.Cmd) {
 		}
 		run.inventory[id]--
 		run.shield = true
+		run.addFloater(0, "WARD ON", floaterStatus)
+		run.bagOpen = false
 		run.addLog("SCROLL // 下一次答错伤害将被抵消")
+	}
+	return m, nil
+}
+
+type bagEntry struct {
+	item  itemSpec
+	count int
+}
+
+func (r *runState) bagEntries() []bagEntry {
+	entries := make([]bagEntry, 0, len(itemCatalog))
+	for _, item := range itemCatalog {
+		if item.category != categoryConsumable || r.inventory[item.id] <= 0 {
+			continue
+		}
+		entries = append(entries, bagEntry{item: item, count: r.inventory[item.id]})
+	}
+	return entries
+}
+
+func (m *Model) openBag() {
+	if m.run == nil {
+		return
+	}
+	m.run.bagOpen = true
+	m.run.bagSelection = min(m.run.bagSelection, max(0, len(m.run.bagEntries())-1))
+}
+
+func (m Model) updateBagKey(key string) (tea.Model, tea.Cmd) {
+	run := m.run
+	entries := run.bagEntries()
+	switch key {
+	case "esc", "e", "tab":
+		run.bagOpen = false
+	case "up", "k":
+		if len(entries) > 0 {
+			run.bagSelection = (run.bagSelection - 1 + len(entries)) % len(entries)
+		}
+	case "down", "j":
+		if len(entries) > 0 {
+			run.bagSelection = (run.bagSelection + 1) % len(entries)
+		}
+	case "enter", " ":
+		if len(entries) == 0 {
+			run.addLog("BAG EMPTY // 没有可使用的消耗品")
+			return m, nil
+		}
+		run.bagSelection = min(run.bagSelection, len(entries)-1)
+		return m.useConsumable(entries[run.bagSelection].item.id)
 	}
 	return m, nil
 }

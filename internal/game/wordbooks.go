@@ -2,8 +2,13 @@ package game
 
 // Word is one vocabulary entry used by the game.
 type Word struct {
-	Term    string
-	Meaning string
+	Term         string
+	Phonetic     string
+	PartOfSpeech string
+	Category     string
+	Definition   string
+	Meaning      string
+	Examples     []string
 }
 
 // Wordbook is a selectable vocabulary archive.
@@ -15,6 +20,99 @@ type Wordbook struct {
 }
 
 var wordbooks = []Wordbook{
+	{
+		ID:          "primary",
+		Name:        "PRIMARY CORE",
+		Description: "小学核心词汇",
+		Words: []Word{
+			{Term: "apple", Meaning: "苹果"},
+			{Term: "book", Meaning: "书；书本"},
+			{Term: "cat", Meaning: "猫"},
+			{Term: "dog", Meaning: "狗"},
+			{Term: "water", Meaning: "水"},
+			{Term: "happy", Meaning: "快乐的"},
+			{Term: "friend", Meaning: "朋友"},
+			{Term: "school", Meaning: "学校"},
+			{Term: "teacher", Meaning: "老师"},
+			{Term: "family", Meaning: "家庭；家人"},
+			{Term: "morning", Meaning: "早晨"},
+			{Term: "garden", Meaning: "花园"},
+			{Term: "music", Meaning: "音乐"},
+			{Term: "orange", Meaning: "橙子；橙色"},
+			{Term: "pencil", Meaning: "铅笔"},
+			{Term: "window", Meaning: "窗户"},
+			{Term: "summer", Meaning: "夏天"},
+			{Term: "animal", Meaning: "动物"},
+			{Term: "bread", Meaning: "面包"},
+			{Term: "river", Meaning: "河流"},
+			{Term: "yellow", Meaning: "黄色的"},
+			{Term: "listen", Meaning: "听"},
+			{Term: "write", Meaning: "写"},
+			{Term: "quiet", Meaning: "安静的"},
+		},
+	},
+	{
+		ID:          "junior",
+		Name:        "JUNIOR HIGH CORE",
+		Description: "初中核心词汇",
+		Words: []Word{
+			{Term: "accept", Meaning: "接受"},
+			{Term: "achieve", Meaning: "实现；达到"},
+			{Term: "advice", Meaning: "建议；忠告"},
+			{Term: "ancient", Meaning: "古代的"},
+			{Term: "brave", Meaning: "勇敢的"},
+			{Term: "careful", Meaning: "仔细的；小心的"},
+			{Term: "choose", Meaning: "选择"},
+			{Term: "culture", Meaning: "文化"},
+			{Term: "decide", Meaning: "决定"},
+			{Term: "develop", Meaning: "发展；培养"},
+			{Term: "discover", Meaning: "发现"},
+			{Term: "environment", Meaning: "环境"},
+			{Term: "exercise", Meaning: "锻炼；练习"},
+			{Term: "famous", Meaning: "著名的"},
+			{Term: "future", Meaning: "未来"},
+			{Term: "health", Meaning: "健康"},
+			{Term: "improve", Meaning: "改进；提高"},
+			{Term: "language", Meaning: "语言"},
+			{Term: "memory", Meaning: "记忆"},
+			{Term: "protect", Meaning: "保护"},
+			{Term: "reason", Meaning: "原因；理由"},
+			{Term: "success", Meaning: "成功"},
+			{Term: "travel", Meaning: "旅行"},
+			{Term: "wonder", Meaning: "想知道；奇迹"},
+		},
+	},
+	{
+		ID:          "senior",
+		Name:        "SENIOR HIGH CORE",
+		Description: "高中核心词汇",
+		Words: []Word{
+			{Term: "abandon", Meaning: "放弃；抛弃"},
+			{Term: "absorb", Meaning: "吸收"},
+			{Term: "academic", Meaning: "学术的"},
+			{Term: "accurate", Meaning: "准确的"},
+			{Term: "adapt", Meaning: "适应；改编"},
+			{Term: "announce", Meaning: "宣布"},
+			{Term: "appreciate", Meaning: "欣赏；感激"},
+			{Term: "attitude", Meaning: "态度"},
+			{Term: "available", Meaning: "可获得的；可用的"},
+			{Term: "balance", Meaning: "平衡"},
+			{Term: "challenge", Meaning: "挑战"},
+			{Term: "communicate", Meaning: "交流"},
+			{Term: "confident", Meaning: "自信的"},
+			{Term: "consider", Meaning: "考虑"},
+			{Term: "convince", Meaning: "使确信；说服"},
+			{Term: "curious", Meaning: "好奇的"},
+			{Term: "determine", Meaning: "决定；确定"},
+			{Term: "evidence", Meaning: "证据"},
+			{Term: "gradually", Meaning: "逐渐地"},
+			{Term: "independent", Meaning: "独立的"},
+			{Term: "opportunity", Meaning: "机会"},
+			{Term: "organize", Meaning: "组织"},
+			{Term: "persuade", Meaning: "劝服；说服"},
+			{Term: "responsible", Meaning: "负责的"},
+		},
+	},
 	{
 		ID:          "cet4",
 		Name:        "CET-4 CORE",
