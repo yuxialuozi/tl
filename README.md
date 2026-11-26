@@ -7,8 +7,9 @@
 - Look up a single English word and get its part of speech, a simple English definition, a Chinese meaning, and two natural examples.
 - Translate English sentences or paragraphs into Chinese, and Chinese text into English.
 - Automatically choose vocabulary mode for one English word and translation mode for everything else.
+- Play a five-minute roguelike vocabulary raid with `tl --game`.
 - Read TOML configuration with environment variable overrides.
-- Render clean output with no TUI, history, favorites, or interactive mode.
+- Keep normal lookup and translation output non-interactive, with no history or favorites.
 
 ## Firefox Extension
 
@@ -131,6 +132,45 @@ Show the version:
 tl version
 ```
 
+Start the five-minute vocabulary raid with the `--game` flag:
+
+```bash
+tl --game
+```
+
+The game runs entirely offline in the terminal with Bubble Tea, and its colors adapt to light and dark terminal themes.
+
+Gameplay:
+
+- Choose a CET-4, CET-6, or TOEFL wordbook.
+- Explore a randomly generated dungeon with the arrow keys or `WASD`.
+- Walk over `?` tiles to collect weapons, accessories, consumables, and passive upgrades.
+- Monsters patrol the map. Walking into a monster, or letting one reach you, starts a four-choice vocabulary battle.
+- Answer correctly to attack. Wrong answers can trigger counterattacks, and combo damage grows with consecutive correct answers.
+- Defeat the multi-phase Boss before the five-minute timer expires.
+
+Monsters:
+
+- `s` Slime: does not counterattack.
+- `k` Skeleton: counterattacks after a wrong answer.
+- `g` Gargoyle: requires two consecutive correct answers to break its ward.
+- `B` Boss: gains extra wards and stronger counterattacks as its health crosses phase thresholds.
+
+Items are split into consumables, weapons, accessories, and passive effects. Every defeated monster drops one random item, with drop rarity weighted at common, rare, and epic tiers.
+
+Controls:
+
+```text
+Arrows / WASD     Move and explore
+Enter             Start a run or restart
+A-D / 1-4         Answer during combat
+H                 Use a health potion (restore 30 HP)
+F                 Use a focus potion (double the next correct hit)
+X                 Use a bomb (35 direct damage)
+R                 Use a warding scroll (absorb the next wrong-answer hit)
+Q                 Quit
+```
+
 Text containing spaces must be quoted. `tl` accepts exactly one input string, and `config` and `version` are reserved command names.
 
 ## Development
@@ -168,6 +208,7 @@ internal/config/      TOML loading, environment overrides, validation
 internal/llm/         OpenAI-compatible HTTP client
 internal/translator/  mode detection, prompts, JSON parsing
 internal/renderer/    Lipgloss and plain-text output
+internal/game/        Bubble Tea vocabulary raid game
 configs/              example configuration
 firefox-extension/    Firefox selection translator
 docs/images/          documentation screenshots

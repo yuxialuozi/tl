@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yuxialuozi/tl/internal/config"
+	"github.com/yuxialuozi/tl/internal/game"
 	"github.com/yuxialuozi/tl/internal/llm"
 	"github.com/yuxialuozi/tl/internal/renderer"
 	"github.com/yuxialuozi/tl/internal/translator"
@@ -17,6 +18,7 @@ import (
 
 // New builds the root command.
 func New(version string, stdout, stderr io.Writer) *cobra.Command {
+	gameMode := false
 	root := &cobra.Command{
 		Use:   "tl [word or text]",
 		Short: "A small terminal tool for English vocabulary and translation",
@@ -29,12 +31,19 @@ Commands:
   tl version   Print the tl version`,
 		Example: `  tl keyring
   tl "The daemon runs in the background."
+  tl --game
   tl config
   tl version`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if gameMode {
+				if len(args) != 0 {
+					return fmt.Errorf("--game does not accept input")
+				}
+				return game.Run(cmd.Context())
+			}
 			if len(args) == 0 {
 				return cmd.Help()
 			}
@@ -56,6 +65,7 @@ Commands:
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
+	root.Flags().BoolVar(&gameMode, "game", false, "Start the five-minute vocabulary raid")
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	return root

@@ -10,8 +10,9 @@ import (
 )
 
 var (
+	headingColor = lipgloss.AdaptiveColor{Light: "#086788", Dark: "#58d9ff"}
 	headerStyle  = lipgloss.NewStyle().Bold(true)
-	headingStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	headingStyle = lipgloss.NewStyle().Bold(true).Foreground(headingColor)
 )
 
 // Renderer formats query and configuration output.

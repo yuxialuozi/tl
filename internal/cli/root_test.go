@@ -105,10 +105,20 @@ func TestHelpDoesNotListExtraCommands(t *testing.T) {
 	if strings.Contains(stdout.String(), "Available Commands") || strings.Contains(stdout.String(), "completion") {
 		t.Fatalf("help lists unexpected commands:\n%s", stdout.String())
 	}
-	for _, part := range []string{"tl config", "tl version", "tl keyring"} {
+	for _, part := range []string{"tl config", "tl version", "tl keyring", "--game"} {
 		if !strings.Contains(stdout.String(), part) {
 			t.Errorf("help missing %q:\n%s", part, stdout.String())
 		}
+	}
+}
+
+func TestGameFlagRejectsInputArguments(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	command := New("test", &stdout, &stderr)
+	command.SetArgs([]string{"--game", "hello"})
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--game does not accept input") {
+		t.Fatalf("Execute() error = %v", err)
 	}
 }
 
